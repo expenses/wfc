@@ -351,10 +351,10 @@ impl PartialOrd for EntropyWithNoise {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ChosenPatternIdError {
     NoCompatiblePatterns,
-    MultipleCompatiblePatterns,
+    MultipleCompatiblePatterns(Vec<PatternId>),
 }
 
 impl WaveCell {
@@ -376,7 +376,13 @@ impl WaveCell {
         } else if self.num_compatible_patterns == 0 {
             Err(ChosenPatternIdError::NoCompatiblePatterns)
         } else {
-            Err(ChosenPatternIdError::MultipleCompatiblePatterns)
+            Err(ChosenPatternIdError::MultipleCompatiblePatterns(
+                self.num_ways_to_become_each_pattern
+                    .enumerate()
+                    .filter(|(_, ways)| !ways.is_zero())
+                    .map(|(id, _)| id)
+                    .collect()
+            ))
         }
     }
     fn weighted_compatible_stats_enumerate<'a>(
@@ -535,7 +541,51 @@ struct Propagator {
     removed_patterns_to_propagate: Vec<RemovedPattern>,
 }
 
-struct Contradiction;
+#[derive(Debug, Clone)]
+pub enum ContradictionTile<T> {
+    ChosenPattern(T),
+    OffGrid,
+    NoCompatiblePatterns,
+    MultipleCompatiblePatterns(Vec<T>),
+}
+
+impl ContradictionTile<PatternId> {
+    fn get_from_wave<W: Wrap>(wave: &Wave, coord: Coord, ) -> Self {
+        let wave_size = wave.grid.size();
+        match W::normalize_coord(coord, wave_size) {
+            None => Self::OffGrid,
+            Some(coord) => {
+                let cell = wave.grid.get_checked(coord);
+                match cell.chosen_pattern_id() {
+                    Ok(id) => Self::ChosenPattern(id),
+                    Err(ChosenPatternIdError::NoCompatiblePatterns) => Self::NoCompatiblePatterns,
+                    Err(ChosenPatternIdError::MultipleCompatiblePatterns(ids)) => {
+                        Self::MultipleCompatiblePatterns(ids)
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<T> ContradictionTile<T> {
+    pub fn map<C>(self, func: impl Fn(T) -> C) -> ContradictionTile<C> {
+        match self {
+            Self::OffGrid => ContradictionTile::OffGrid,
+            Self::ChosenPattern(id) => ContradictionTile::ChosenPattern(func(id)),
+            Self::NoCompatiblePatterns => ContradictionTile::NoCompatiblePatterns,
+            Self::MultipleCompatiblePatterns(ids) => ContradictionTile::MultipleCompatiblePatterns(ids.into_iter().map(func).collect())
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Contradiction {
+    pub north: ContradictionTile<PatternId>,
+    pub south: ContradictionTile<PatternId>,
+    pub west: ContradictionTile<PatternId>,
+    pub east: ContradictionTile<PatternId>,
+}
 
 impl Propagator {
     fn clear(&mut self) {
@@ -590,7 +640,12 @@ impl Propagator {
                             entropy_changes_by_coord.remove(&coord_to_update);
                         }
                         D::RemovedFinalCompatiblePattern => {
-                            return Err(Contradiction);
+                            return Err(Contradiction {
+                                west: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::West.coord()),
+                                south: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::South.coord()),
+                                east: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::East.coord()),
+                                north: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::North.coord()),
+                            });
                         }
                         D::RemovedFinalWeightedCompatiblePattern => {
                             entropy_changes_by_coord.remove(&coord_to_update);
@@ -725,9 +780,9 @@ pub enum Observe {
     Complete,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PropagateError {
-    Contradiction,
+    Contradiction(Contradiction)
 }
 
 struct WaveCellHandle<'a> {
@@ -822,7 +877,7 @@ impl Context {
                 &mut self.entropy_changes_by_coord,
                 &mut self.num_cells_with_more_than_one_weighted_compatible_pattern,
             )
-            .map_err(|_: Contradiction| PropagateError::Contradiction)?;
+            .map_err(|c: Contradiction| PropagateError::Contradiction(c))?;
         for (coord, entropy_with_noise) in self.entropy_changes_by_coord.drain() {
             self.observer.entropy_priority_queue.push(CoordEntropy {
                 coord,

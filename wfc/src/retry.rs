@@ -31,7 +31,7 @@ impl RetryOwn for Forever {
         loop {
             match run.collapse(rng) {
                 Ok(()) => (),
-                Err(PropagateError::Contradiction) => continue,
+                Err(PropagateError::Contradiction(_)) => continue,
             }
             return run.into_wave();
         }
@@ -60,6 +60,10 @@ impl RetryOwn for ParNumTimes {
         use rand::SeedableRng;
         use rand_xorshift::XorShiftRng;
         use rayon::prelude::*;
+
+        let contradiction = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let contradiction_setter = contradiction.clone();
+
         // Each thread runs with a different rng so they can produce different results.  The
         // `RetryOwn` trait doesn't provide a way to produce new rngs of type `R` besides `clone`,
         // which won't help since we want each rng to be different.  Instead, each thread runs with
@@ -71,14 +75,23 @@ impl RetryOwn for ParNumTimes {
         let rngs = (0..self.0)
             .map(|_| XorShiftRng::seed_from_u64(rng.gen()))
             .collect::<Vec<_>>();
-        rngs.into_par_iter()
+        let result = rngs.into_par_iter()
             .filter_map(|mut rng| {
                 let mut runner = run.clone();
-                let collapse_result = runner.collapse(&mut rng);
-                collapse_result.map(|_| runner.into_wave()).ok()
+                match runner.collapse(&mut rng) {
+                    Ok(_) => Some(runner.into_wave()),
+                    Err(contradiction) => {
+                        *contradiction_setter.lock().unwrap() = Some(contradiction);
+                        None
+                    }
+                }
             })
-            .find_any(|_| true)
-            .ok_or(PropagateError::Contradiction)
+            .find_any(|_| true);
+
+        match result {
+            Some(wave) => Ok(wave),
+            None => Err(contradiction.lock().unwrap().as_ref().unwrap().clone())
+        }
     }
 }
 
@@ -142,7 +155,7 @@ impl RetryBorrow for Forever {
         loop {
             match run.collapse(rng) {
                 Ok(()) => break,
-                Err(PropagateError::Contradiction) => continue,
+                Err(PropagateError::Contradiction(_)) => continue,
             }
         }
     }
