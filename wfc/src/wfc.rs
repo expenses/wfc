@@ -542,14 +542,14 @@ struct Propagator {
 }
 
 #[derive(Debug, Clone)]
-pub enum ContradictionTile<T> {
-    ChosenPattern(T),
+pub enum ContradictionTile {
+    ChosenPattern(PatternId),
     OffGrid,
     NoCompatiblePatterns,
-    MultipleCompatiblePatterns(Vec<T>),
+    MultipleCompatiblePatterns(Vec<PatternId>),
 }
 
-impl ContradictionTile<PatternId> {
+impl ContradictionTile {
     fn get_from_wave<W: Wrap>(wave: &Wave, coord: Coord, ) -> Self {
         let wave_size = wave.grid.size();
         match W::normalize_coord(coord, wave_size) {
@@ -568,23 +568,12 @@ impl ContradictionTile<PatternId> {
     }
 }
 
-impl<T> ContradictionTile<T> {
-    pub fn map<C>(self, func: impl Fn(T) -> C) -> ContradictionTile<C> {
-        match self {
-            Self::OffGrid => ContradictionTile::OffGrid,
-            Self::ChosenPattern(id) => ContradictionTile::ChosenPattern(func(id)),
-            Self::NoCompatiblePatterns => ContradictionTile::NoCompatiblePatterns,
-            Self::MultipleCompatiblePatterns(ids) => ContradictionTile::MultipleCompatiblePatterns(ids.into_iter().map(func).collect())
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Contradiction {
-    pub north: ContradictionTile<PatternId>,
-    pub south: ContradictionTile<PatternId>,
-    pub west: ContradictionTile<PatternId>,
-    pub east: ContradictionTile<PatternId>,
+    pub north: ContradictionTile,
+    pub south: ContradictionTile,
+    pub west: ContradictionTile,
+    pub east: ContradictionTile,
 }
 
 impl Propagator {
