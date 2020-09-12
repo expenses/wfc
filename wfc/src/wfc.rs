@@ -10,7 +10,6 @@ use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::iter;
-use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::ops::{Index, IndexMut};
 use std::slice;
@@ -550,9 +549,9 @@ pub enum ContradictionTile {
 }
 
 impl ContradictionTile {
-    fn get_from_wave<W: Wrap>(wave: &Wave, coord: Coord, ) -> Self {
+    fn get_from_wave<W: Wrap>(wave: &Wave, coord: Coord, wrap: W) -> Self {
         let wave_size = wave.grid.size();
-        match W::normalize_coord(coord, wave_size) {
+        match wrap.normalize_coord(coord, wave_size) {
             None => Self::OffGrid,
             Some(coord) => {
                 let cell = wave.grid.get_checked(coord);
@@ -586,12 +585,13 @@ impl Propagator {
         global_stats: &GlobalStats,
         entropy_changes_by_coord: &mut HashMap<Coord, EntropyWithNoise>,
         num_cells_with_more_than_one_weighted_compatible_pattern: &mut u32,
+        wrap: W,
     ) -> Result<(), Contradiction> {
         entropy_changes_by_coord.clear();
         let wave_size = wave.grid.size();
         while let Some(removed_pattern) = self.removed_patterns_to_propagate.pop() {
             for direction in CardinalDirections {
-                let coord_to_update = if let Some(coord_to_update) = W::normalize_coord(
+                let coord_to_update = if let Some(coord_to_update) = wrap.normalize_coord(
                     removed_pattern.coord + direction.coord(),
                     wave_size,
                 ) {
@@ -630,10 +630,10 @@ impl Propagator {
                         }
                         D::RemovedFinalCompatiblePattern => {
                             return Err(Contradiction {
-                                west: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::West.coord()),
-                                south: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::South.coord()),
-                                east: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::East.coord()),
-                                north: ContradictionTile::get_from_wave::<W>(wave, coord_to_update + CardinalDirection::North.coord()),
+                                west: ContradictionTile::get_from_wave(wave, coord_to_update + CardinalDirection::West.coord(), wrap),
+                                south: ContradictionTile::get_from_wave(wave, coord_to_update + CardinalDirection::South.coord(), wrap),
+                                east: ContradictionTile::get_from_wave(wave, coord_to_update + CardinalDirection::East.coord(), wrap),
+                                north: ContradictionTile::get_from_wave(wave, coord_to_update + CardinalDirection::North.coord(), wrap),
                             });
                         }
                         D::RemovedFinalWeightedCompatiblePattern => {
@@ -858,13 +858,15 @@ impl Context {
         &mut self,
         wave: &mut Wave,
         global_stats: &GlobalStats,
+        wrap: W,
     ) -> Result<(), PropagateError> {
         self.propagator
-            .propagate::<W>(
+            .propagate(
                 wave,
                 global_stats,
                 &mut self.entropy_changes_by_coord,
                 &mut self.num_cells_with_more_than_one_weighted_compatible_pattern,
+                wrap,
             )
             .map_err(|c: Contradiction| PropagateError::Contradiction(c))?;
         for (coord, entropy_with_noise) in self.entropy_changes_by_coord.drain() {
@@ -979,7 +981,7 @@ struct RunBorrowCore<'a, W: Wrap = WrapXY> {
     context: &'a mut Context,
     wave: &'a mut Wave,
     global_stats: &'a GlobalStats,
-    output_wrap: PhantomData<W>,
+    output_wrap: W,
 }
 
 pub struct WaveCellRef<'a> {
@@ -1123,7 +1125,7 @@ impl<'a, W: Wrap> RunBorrowCore<'a, W> {
             context,
             wave,
             global_stats,
-            output_wrap: PhantomData,
+            output_wrap,
         }
     }
 
@@ -1133,7 +1135,7 @@ impl<'a, W: Wrap> RunBorrowCore<'a, W> {
     }
 
     fn propagate(&mut self) -> Result<(), PropagateError> {
-        self.context.propagate::<W>(self.wave, self.global_stats)
+        self.context.propagate(self.wave, self.global_stats, self.output_wrap)
     }
 
     fn observe<R: Rng>(&mut self, rng: &mut R) -> Observe {
@@ -1255,7 +1257,7 @@ pub struct RunOwn<'a, W: Wrap = WrapXY, F: ForbidPattern = ForbidNothing> {
     context: Context,
     wave: Wave,
     global_stats: &'a GlobalStats,
-    output_wrap: PhantomData<W>,
+    output_wrap: W,
     forbid: F,
 }
 
@@ -1321,7 +1323,7 @@ where
             context,
             wave,
             global_stats,
-            output_wrap: PhantomData,
+            output_wrap: wrap,
             forbid,
         };
         s.borrow_mut().reset(rng);

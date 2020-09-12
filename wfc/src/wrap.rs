@@ -1,8 +1,8 @@
 use coord_2d::{Coord, Size};
 
-pub trait Wrap: Copy + Send + Sync + private::Sealed {
+pub trait Wrap: Copy + Send + Sync {
     #[doc(hidden)]
-    fn normalize_coord(coord: Coord, size: Size) -> Option<Coord>;
+    fn normalize_coord(self, coord: Coord, size: Size) -> Option<Coord>;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -18,7 +18,7 @@ pub struct WrapY;
 pub struct WrapXY;
 
 impl Wrap for WrapNone {
-    fn normalize_coord(coord: Coord, size: Size) -> Option<Coord> {
+    fn normalize_coord(self, coord: Coord, size: Size) -> Option<Coord> {
         if coord.is_valid(size) {
             Some(coord)
         } else {
@@ -41,7 +41,7 @@ fn normalize_value(value: i32, size: u32) -> i32 {
 }
 
 impl Wrap for WrapX {
-    fn normalize_coord(coord: Coord, size: Size) -> Option<Coord> {
+    fn normalize_coord(self, coord: Coord, size: Size) -> Option<Coord> {
         if value_is_valid(coord.y, size.y()) {
             let x = normalize_value(coord.x, size.x());
             Some(Coord::new(x, coord.y))
@@ -52,13 +52,13 @@ impl Wrap for WrapX {
 }
 
 impl Wrap for WrapXY {
-    fn normalize_coord(coord: Coord, size: Size) -> Option<Coord> {
+    fn normalize_coord(self, coord: Coord, size: Size) -> Option<Coord> {
         Some(coord.normalize(size))
     }
 }
 
 impl Wrap for WrapY {
-    fn normalize_coord(coord: Coord, size: Size) -> Option<Coord> {
+    fn normalize_coord(self, coord: Coord, size: Size) -> Option<Coord> {
         if value_is_valid(coord.x, size.x()) {
             let y = normalize_value(coord.y, size.y());
             Some(Coord::new(coord.x, y))
@@ -68,15 +68,21 @@ impl Wrap for WrapY {
     }
 }
 
-mod private {
-    use super::*;
 
-    pub trait Sealed {}
+#[derive(Clone, Copy, Debug)]
+pub enum MultiWrap {
+    None, X, Y, XY,
+}
 
-    impl Sealed for WrapX {}
-    impl Sealed for WrapY {}
-    impl Sealed for WrapXY {}
-    impl Sealed for WrapNone {}
+impl Wrap for MultiWrap {
+    fn normalize_coord(self, coord: Coord, size: Size) -> Option<Coord> {
+        match self {
+            Self::None => WrapNone.normalize_coord(coord, size),
+            Self::X => WrapX.normalize_coord(coord, size),
+            Self::Y => WrapY.normalize_coord(coord, size),
+            Self::XY => WrapXY.normalize_coord(coord, size),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -86,27 +92,27 @@ mod test {
     #[test]
     fn wraps() {
         assert_eq! {
-            WrapNone::normalize_coord(Coord::new(2, 3), Size::new(4, 5)),
+            WrapNone.normalize_coord(Coord::new(2, 3), Size::new(4, 5)),
             Some(Coord::new(2, 3))
         };
         assert_eq! {
-            WrapNone::normalize_coord(Coord::new(4, 3), Size::new(4, 5)),
+            WrapNone.normalize_coord(Coord::new(4, 3), Size::new(4, 5)),
             None,
         };
         assert_eq! {
-            WrapX::normalize_coord(Coord::new(4, 3), Size::new(4, 5)),
+            WrapX.normalize_coord(Coord::new(4, 3), Size::new(4, 5)),
             Some(Coord::new(0, 3)),
         };
         assert_eq! {
-            WrapY::normalize_coord(Coord::new(4, 3), Size::new(4, 5)),
+            WrapY.normalize_coord(Coord::new(4, 3), Size::new(4, 5)),
             None,
         };
         assert_eq! {
-            WrapY::normalize_coord(Coord::new(2, 6), Size::new(4, 5)),
+            WrapY.normalize_coord(Coord::new(2, 6), Size::new(4, 5)),
             Some(Coord::new(2, 1)),
         };
         assert_eq! {
-            WrapXY::normalize_coord(Coord::new(2, 6), Size::new(4, 5)),
+            WrapXY.normalize_coord(Coord::new(2, 6), Size::new(4, 5)),
             Some(Coord::new(2, 1)),
         };
     }
